@@ -6,6 +6,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 
 // NOTE: https://curl.se/libcurl
 
@@ -13,6 +14,7 @@
 #define HTTP_CLIENT_DEFAULT_COOKIES_PATH "cookies.txt"
 
 namespace http {
+  size_t recv_headers(char* buffer, size_t size, size_t nitems, std::unordered_map<std::string, std::string>& user_data);
   size_t writefunc(void *ptr, size_t size, size_t nmemb, std::stringstream* ss);
 
   /**
@@ -42,6 +44,7 @@ namespace http {
     CURLcode    code;
     std::string output;
     std::string error;
+    std::unordered_map<std::string, std::string> response_headers;
   };
 
   /**
@@ -58,6 +61,7 @@ namespace http {
     std::stringstream _body_stream;
     std::string _url;
     std::list<UrlParam> _params;
+    std::unordered_map<std::string, std::string> _resp_header_map;
 
     CURL *_curl;
     curl_slist *_headers;
@@ -87,12 +91,28 @@ namespace http {
     HttpClient& get(const char* url);
 
     /**
-    * Sets a Header onto the HttpClient instance.
+    * Configures the HttpClient instance's URL to the given URL.
     *
-    * @param header_entry Header to set.
+    * @param url url to invoke request on.
     * @returns HttpClient instance.
     */
-    HttpClient& set_header(const char* header_entry);
+    HttpClient& set_url(const char* url);
+
+    /**
+     * Sets a Header onto the HttpClient instance.
+     *
+     * @param header_entry Header to set.
+     * @returns HttpClient instance.
+     */
+    HttpClient& set_header(const char *header_entry);
+
+    /**
+     * Sets the raw body to include with the request.
+     *
+     * @param body String containing raw body request.
+     * @returns HttpClient instance.
+     */
+    HttpClient& set_raw_body(const std::string body);
 
     /**
     * Sets authority header.

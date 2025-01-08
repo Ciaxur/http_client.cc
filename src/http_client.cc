@@ -1,4 +1,5 @@
 #include "http/http_client.h"
+#include <curl/easy.h>
 #include <fmt/format.h>
 #include <filesystem>
 #include <fstream>
@@ -10,6 +11,36 @@ namespace http {
 
   void cleanup() {
     curl_global_cleanup();
+  }
+
+
+  size_t recv_headers(char* buffer, size_t size, size_t nitems, std::unordered_map<std::string, std::string>& header_map) {
+    size_t total_size = size * nitems;
+    const std::string buffer_str(buffer, total_size);
+
+    // Ignore empty headers.
+    if (buffer_str == "\r\n" || buffer_str == "\n") {
+        return total_size;
+    }
+
+    // Find the colon within the buffer header, as that's how headers are
+    // constructed.
+    size_t colon_pos = buffer_str.find(":");
+    if (colon_pos != std::string::npos) {
+      const std::string key = buffer_str.substr(0, colon_pos);
+      std::string value = buffer_str.substr(colon_pos + 1);
+
+      // Trim any whitespace.
+      value.erase(0, value.find_first_not_of(" \t"));
+      value.erase(value.find_last_not_of(" \t") + 1);
+
+      value.erase(0, value.find_first_not_of("\r\n"));
+      value.erase(value.find_last_not_of("\r\n") + 1);
+
+      header_map.insert({ key, value });
+    }
+
+    return total_size;
   }
 
   size_t writefunc(void *ptr, size_t size, size_t nmemb, std::stringstream* ss) {
@@ -62,7 +93,7 @@ namespace http {
     return escaped.str();
   }
 
-  HttpClient::HttpClient(): _curl(nullptr), _headers(nullptr)  {
+  HttpClient::HttpClient(): _curl(nullptr), _headers(nullptr), _body_stream(), _resp_header_map() {
     this->_curl = curl_easy_init();
 
     // Default options.
@@ -79,6 +110,10 @@ namespace http {
     // Store output into stream buffer.
     curl_easy_setopt(_curl, CURLOPT_WRITEDATA, &this->_body_stream);
     curl_easy_setopt(_curl, CURLOPT_WRITEFUNCTION, writefunc);
+
+    // Store recieved headers.
+    curl_easy_setopt(_curl, CURLOPT_HEADERDATA, &this->_resp_header_map);
+    curl_easy_setopt(_curl, CURLOPT_HEADERFUNCTION, recv_headers);
   }
 
   HttpClient::~HttpClient() {
@@ -99,6 +134,17 @@ namespace http {
 
   HttpClient&  HttpClient::set_header(const char* header_entry) {
     this->_headers = curl_slist_append(this->_headers, header_entry);
+    return *this;
+  }
+
+  HttpClient& HttpClient::set_url(const char* url) {
+    this->_url = url;
+    return *this;
+  }
+
+  HttpClient& HttpClient::set_raw_body(const std::string body) {
+    curl_easy_setopt(this->_curl, CURLOPT_POSTFIELDSIZE, body.size());
+    curl_easy_setopt(this->_curl,  CURLOPT_COPYPOSTFIELDS, body.c_str());
     return *this;
   }
 
@@ -170,7 +216,8 @@ namespace http {
     return {
       .code = res,
       .output = this->_body_stream.str(),
-      .error = curl_easy_strerror(res)
+      .error = curl_easy_strerror(res),
+      .response_headers = this->_resp_header_map,
     };
   }
 }
