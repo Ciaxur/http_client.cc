@@ -1,7 +1,8 @@
 #pragma once
 
-#include <curl/curl.h>
 #include <cstdint>
+#include <curl/curl.h>
+#include <functional>
 #include <list>
 #include <map>
 #include <sstream>
@@ -14,8 +15,16 @@
 #define HTTP_CLIENT_DEFAULT_COOKIES_PATH "cookies.txt"
 
 namespace http {
+  struct WriteBuffer {
+    // Buffer stream populated with consumed stream of response data.
+    std::stringstream ss;
+
+    // Optional callback to be invoked on buffer write.
+    std::function<void(WriteBuffer*)>* on_recv_cb = nullptr;
+  };
+
   size_t recv_headers(char* buffer, size_t size, size_t nitems, std::unordered_map<std::string, std::string>& user_data);
-  size_t writefunc(void *ptr, size_t size, size_t nmemb, std::stringstream* ss);
+  size_t writefunc(void *ptr, size_t size, size_t nmemb, WriteBuffer* write_buffer);
 
   /**
    * Globally initializes the CURL library.
@@ -58,7 +67,7 @@ namespace http {
 
   class HttpClient {
   private:
-    std::stringstream _body_stream;
+    WriteBuffer _body_stream;
     std::string _url;
     std::list<UrlParam> _params;
     std::unordered_map<std::string, std::string> _resp_header_map;
@@ -153,6 +162,35 @@ namespace http {
     * @returns HttpClient instance.
     */
     HttpClient& add_url_param(const UrlParam& param);
+
+    /**
+     * Sets the given callback on received response data.
+     *
+     * @param cb callback to register.
+     * @returns HttpClient instance.
+     */
+    HttpClient& set_on_recv_callback(std::function<void(WriteBuffer*)>* cb);
+
+    /**
+     * Configures HTTP client to stream responses.
+     *
+     * @returns HttpClient instance.
+     */
+    HttpClient& stream();
+
+    /**
+     * Thin wrapper around websocket stream writes.
+     *
+     * @param buffer buffer to send
+     * @returns HttpClient instance.
+     */
+    HttpClient& stream_write(const std::string& buffer);
+
+    /**
+     * Thin wrapper around websocket closing a websocket stream.
+     * @returns HttpClient instance.
+     */
+    HttpClient& stream_close();
 
     /**
     * Executes the built HttpClient structure, returning the result.

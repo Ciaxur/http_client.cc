@@ -43,8 +43,13 @@ namespace http {
     return total_size;
   }
 
-  size_t writefunc(void *ptr, size_t size, size_t nmemb, std::stringstream* ss) {
-    ss->write(static_cast<const char*>(ptr), nmemb);
+  size_t writefunc(void *ptr, size_t size, size_t nmemb, WriteBuffer* write_buffer) {
+    const std::string_view buffer(static_cast<char*>(ptr), nmemb);
+    write_buffer->ss << buffer;
+
+    // Invoke registered callback if available.
+    if (write_buffer->on_recv_cb) (*write_buffer->on_recv_cb)(write_buffer);
+
     return size*nmemb;
   }
 
@@ -132,8 +137,46 @@ namespace http {
     return *this;
   }
 
-  HttpClient&  HttpClient::set_header(const char* header_entry) {
+  HttpClient& HttpClient::set_header(const char* header_entry) {
     this->_headers = curl_slist_append(this->_headers, header_entry);
+    return *this;
+  }
+
+  HttpClient& HttpClient::set_on_recv_callback(std::function<void(WriteBuffer*)>* cb) {
+    this->_body_stream.on_recv_cb = cb;
+    return *this;
+  }
+
+  HttpClient& HttpClient::stream() {
+    // Configure web-socket protocol.
+    curl_easy_setopt(this->_curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
+    return *this;
+  }
+
+  HttpClient& HttpClient::stream_close() {
+    size_t bytes_sent;
+    curl_ws_send(this->_curl, "", 0, &bytes_sent, 0, CURLWS_CLOSE);
+    return *this;
+  }
+
+  HttpClient& HttpClient::stream_write(const std::string& buffer) {
+    size_t total_bytes_sent = 0;
+    size_t bytes_sent;
+
+    // Flush the entire buffer.
+    while (total_bytes_sent != buffer.size()) {
+      curl_ws_send(
+        this->_curl,
+        buffer.c_str(),
+        buffer.size(),
+        &bytes_sent,
+        total_bytes_sent, // offset to fragmented buffer
+        CURLWS_TEXT
+      );
+
+      total_bytes_sent += bytes_sent;
+    }
+
     return *this;
   }
 
@@ -160,7 +203,7 @@ namespace http {
     return *this;
   }
 
-  HttpClient&  HttpClient::set_cookie_filepath(const char* path) {
+  HttpClient& HttpClient::set_cookie_filepath(const char* path) {
     // "-c" and "-b" flags. Storing and reading cookies.
     curl_easy_setopt(this->_curl, CURLOPT_COOKIEJAR, path);
     curl_easy_setopt(this->_curl, CURLOPT_COOKIEFILE, path);
@@ -174,12 +217,12 @@ namespace http {
     return *this;
   }
 
-  HttpClient&  HttpClient::set_verbosity(uint64_t value) {
+  HttpClient& HttpClient::set_verbosity(uint64_t value) {
     curl_easy_setopt(this->_curl, CURLOPT_VERBOSE, value);
     return *this;
   }
 
-  HttpClient&  HttpClient::add_url_param(const UrlParam& param) {
+  HttpClient& HttpClient::add_url_param(const UrlParam& param) {
     this->_params.push_back(param);
     return *this;
   }
@@ -215,7 +258,7 @@ namespace http {
     CURLcode res = curl_easy_perform(this->_curl);
     return {
       .code = res,
-      .output = this->_body_stream.str(),
+      .output = this->_body_stream.ss.str(),
       .error = curl_easy_strerror(res),
       .response_headers = this->_resp_header_map,
     };
